@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,31 +18,12 @@
  * Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#include "Direct3DDevice.h"
+#ifndef _H_LG_APP_INTERNAL_
+#define _H_LG_APP_INTERNAL_
 
-HRESULT Direct3DDevice::Init()
-{
-  HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_factory));
-  if (FAILED(hr))
-    return hr;
+#include "app.h"
 
-  hr = m_factory->EnumAdapterByLuid(m_adapterLuid, IID_PPV_ARGS(&m_adapter));
-  if (FAILED(hr))
-    return hr;
+void app_handleKeyPressInternal(int scancode);
+void app_handleKeyReleaseInternal(int scancode);
 
-  hr = D3D11CreateDevice(
-    m_adapter.Get(),
-    D3D_DRIVER_TYPE_UNKNOWN,
-    nullptr,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-    nullptr,
-    0,
-    D3D11_SDK_VERSION,
-    &m_device,
-    nullptr,
-    &m_context);
-  if (FAILED(hr))
-    return hr;
-
-  return S_OK;
-}
+#endif

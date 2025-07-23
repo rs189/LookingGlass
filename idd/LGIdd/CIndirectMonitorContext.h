@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -34,6 +34,10 @@ class CIndirectMonitorContext
 {
 private:
   IDDCX_MONITOR m_monitor;
+
+  std::shared_ptr<CD3D11Device> m_dx11Device;
+  std::shared_ptr<CD3D12Device> m_dx12Device;
+
   CIndirectDeviceContext * m_devContext;
   std::unique_ptr<CSwapChainProcessor> m_swapChain;
 
@@ -55,11 +59,7 @@ public:
   void AssignSwapChain(IDDCX_SWAPCHAIN swapChain, LUID renderAdapter, HANDLE newFrameEvent);
   void UnassignSwapChain();
 
-  inline void ResendLastFrame()
-  {
-    if (m_swapChain)
-      m_swapChain->ResendLastFrame();
-  }
+  CIndirectDeviceContext * GetDeviceContext() { return m_devContext; }
 };
 
 struct CIndirectMonitorContextWrapper

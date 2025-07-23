@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -52,6 +52,7 @@
 #include "common/cpuinfo.h"
 #include "common/ll.h"
 
+#include "message.h"
 #include "core.h"
 #include "app.h"
 #include "audio.h"
@@ -64,6 +65,7 @@
 #include "overlay_utils.h"
 #include "util.h"
 #include "render_queue.h"
+#include "evdev.h"
 
 // forwards
 static int renderThread(void * unused);
@@ -1204,8 +1206,6 @@ static int lg_run(void)
   overlayGraph_register("UPLOAD", g_state.uploadTimings , 0.0f, 50.0f, NULL);
   overlayGraph_register("RENDER", g_state.renderDuration, 0.0f, 10.0f, NULL);
 
-  initImGuiKeyMap(g_state.io->KeyMap);
-
   // unknown guest OS at this time
   g_state.guestOS = KVMFR_OS_OTHER;
 
@@ -1241,6 +1241,9 @@ static int lg_run(void)
     DEBUG_ERROR("Subsystem early init failed");
     return -1;
   }
+
+  if (evdev_start())
+    DEBUG_INFO("Using evdev for keyboard capture");
 
   // override the SIGINIT handler so that we can tell the difference between
   // SIGINT and the user sending a close event, such as ALT+F4
@@ -1497,18 +1500,21 @@ restart:
         if (waitCount == 30)
         {
           DEBUG_BREAK();
-          msgs[msgsCount++] = app_msgBox(
-              "Host Application Not Running",
-              "It seems the host application is not running or your\n"
-              "virtual machine is still starting up\n"
-              "\n"
-              "If the the VM is running and booted please check the\n"
-              "host application log for errors. You can find the\n"
-              "log through the shortcut in your start menu\n"
-              "\n"
-              "Continuing to wait...");
+          if (!g_params.disableWaitingMessage) 
+          {
+            msgs[msgsCount++] = app_msgBox(
+                "Host Application Not Running",
+                "It seems the host application is not running or your\n"
+                "virtual machine is still starting up\n"
+                "\n"
+                "If the the VM is running and booted please check the\n"
+                "host application log for errors. You can find the\n"
+                "log through the shortcut in your start menu\n"
+                "\n"
+                "Continuing to wait...");
 
-          msgs[msgsCount++] = showSpiceInputHelp();
+            msgs[msgsCount++] = showSpiceInputHelp();
+          }
 
           DEBUG_INFO("Check the host log in your guest at %%ProgramData%%\\Looking Glass (host)\\looking-glass-host.txt");
           DEBUG_INFO("Continuing to wait...");
@@ -1754,6 +1760,7 @@ restart:
       g_state.state = APP_STATE_RESTART;
       break;
     }
+    lgMessage_process();
     g_state.ds->wait(100);
   }
 
@@ -1870,6 +1877,9 @@ int main(int argc, char * argv[])
   egl_dynProcsInit();
   gl_dynProcsInit();
 
+  if (!lgMessage_init())
+    return -1;
+
   g_state.bindings = ll_new();
 
   g_state.overlays = ll_new();
@@ -1893,11 +1903,14 @@ int main(int argc, char * argv[])
     if (LG_AudioDevs[i]->earlyInit)
       LG_AudioDevs[i]->earlyInit();
 
+  evdev_earlyInit();
+
   if (!config_load(argc, argv))
     return -1;
 
   const int ret = lg_run();
   lg_shutdown();
+  lgMessage_deinit();
 
   config_free();
 

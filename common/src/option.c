@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -131,16 +131,16 @@ bool option_register(struct Option options[])
   for(int i = 0; options[i].type != OPTION_TYPE_NONE; ++i)
     ++new;
 
-  state.options = realloc(
+  void * tmp = realloc(
     state.options,
     sizeof(*state.options) * (state.oCount + new)
   );
-
-  if (!state.options)
+  if (!tmp)
   {
     DEBUG_ERROR("out of memory");
     return false;
   }
+  state.options = tmp;
 
   for(int i = 0; options[i].type != OPTION_TYPE_NONE; ++i)
   {
@@ -229,15 +229,16 @@ bool option_register(struct Option options[])
         continue;
 
       found = true;
-      group->options = realloc(
+      void * tmp = realloc(
         group->options,
         sizeof(*group->options) * (group->count + 1)
       );
-      if (!group->options)
+      if (!tmp)
       {
         DEBUG_ERROR("out of memory");
         return false;
       }
+      group->options = tmp;
       group->options[group->count] = o;
 
       int len = strlen(o->name);
@@ -250,15 +251,16 @@ bool option_register(struct Option options[])
 
     if (!found)
     {
-      state.groups = realloc(
+      void * new = realloc(
         state.groups,
         sizeof(*state.groups) * (state.gCount + 1)
       );
-      if (!state.groups)
+      if (!new)
       {
         DEBUG_ERROR("out of memory");
         return false;
       }
+      state.groups = new;
 
       struct OptionGroup * group = &state.groups[state.gCount];
       ++state.gCount;
@@ -952,7 +954,7 @@ float option_get_float(const char * module, const char * name)
   if (!o)
   {
     DEBUG_ERROR("BUG: Failed to get the value for option %s:%s", module, name);
-    return NAN;
+    return 0.0f;
   }
   DEBUG_ASSERT(o->type == OPTION_TYPE_FLOAT);
   return o->value.x_float;

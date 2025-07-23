@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -23,6 +23,7 @@
 #include <Windows.h>
 #include <wdf.h>
 #include <IddCx.h>
+#include <vector>
 
 #include "CIVSHMEM.h"
 
@@ -34,12 +35,23 @@ extern "C" {
 #define MAX_POINTER_SIZE (sizeof(KVMFRCursor) + (512 * 512 * 4))
 #define POINTER_SHAPE_BUFFERS 3
 
+//FIXME: this should not really be done here, this is a hack
+#pragma warning(push)
+#pragma warning(disable: 4200)
+struct FrameBuffer
+{
+  volatile uint32_t wp;
+  uint8_t data[0];
+};
+#pragma warning(pop)
+
 class CIndirectDeviceContext
 {
 private:
   WDFDEVICE     m_wdfDevice;
-  IDDCX_ADAPTER m_adapter = nullptr;
-  IDDCX_MONITOR m_monitor = nullptr;
+  IDDCX_ADAPTER m_adapter       = nullptr;
+  IDDCX_MONITOR m_monitor       = nullptr;
+  bool          m_replugMonitor = false;
 
   CIVSHMEM m_ivshmem;
 
@@ -56,33 +68,77 @@ private:
   bool m_cursorVisible = false;
   int m_cursorX = 0, m_cursorY = 0;
 
+  size_t         m_alignSize    = 0;
   size_t         m_maxFrameSize = 0;
   int            m_frameIndex   = 0;
   uint32_t       m_formatVer    = 0;
   uint32_t       m_frameSerial  = 0;
   PLGMPMemory    m_frameMemory[LGMP_Q_FRAME_LEN] = {};
+  KVMFRFrame   * m_frame      [LGMP_Q_FRAME_LEN] = {};
+  FrameBuffer  * m_frameBuffer[LGMP_Q_FRAME_LEN] = {};
 
-  int         m_width  = 0;
-  int         m_height = 0;
-  int         m_pitch  = 0;
-  DXGI_FORMAT m_format = DXGI_FORMAT_UNKNOWN;
+  int         m_width    = 0;
+  int         m_height   = 0;
+  int         m_pitch    = 0;
+  DXGI_FORMAT m_format   = DXGI_FORMAT_UNKNOWN;
+  bool        m_hasFrame = false;
 
-  bool SetupLGMP();
+  void DeInitLGMP();
   void LGMPTimer();
-  void ResendCursor();  
+  void ResendCursor();
+
+  struct DisplayMode
+  {
+    unsigned width;
+    unsigned height;
+    unsigned refresh;
+    bool     preferred;
+  };
+  std::vector<DisplayMode> m_displayModes;
+  DisplayMode m_customMode    = {};
+  bool        m_setCustomMode = false;
 
 public:
   CIndirectDeviceContext(_In_ WDFDEVICE wdfDevice) :
     m_wdfDevice(wdfDevice) {};
 
-  virtual ~CIndirectDeviceContext();
+  virtual ~CIndirectDeviceContext() { DeInitLGMP(); }
 
+  bool SetupLGMP(size_t alignSize);
+
+  void PopulateDefaultModes(bool setDefaultMode);
   void InitAdapter();
-
   void FinishInit(UINT connectorIndex);
+  void ReplugMonitor();
 
-  void SendFrame(int width, int height, int pitch, DXGI_FORMAT format, void* data);
+  void OnAssignSwapChain();
+  void OnUnassignedSwapChain();
+
+  NTSTATUS ParseMonitorDescription(
+    const IDARG_IN_PARSEMONITORDESCRIPTION* inArgs, IDARG_OUT_PARSEMONITORDESCRIPTION* outArgs);
+  NTSTATUS MonitorGetDefaultModes(
+    const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* inArgs, IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* outArgs);
+  NTSTATUS MonitorQueryTargetModes(
+    const IDARG_IN_QUERYTARGETMODES* inArgs, IDARG_OUT_QUERYTARGETMODES* outArgs);
+
+  void SetResolution(int width, int height);
+
+  size_t GetAlignSize()    { return m_alignSize;    }
+  size_t GetMaxFrameSize() { return m_maxFrameSize; }
+
+  struct PreparedFrameBuffer
+  {
+    unsigned frameIndex;
+    uint8_t* mem;
+  };
+
+  PreparedFrameBuffer PrepareFrameBuffer(int width, int height, int pitch, DXGI_FORMAT format);
+  void WriteFrameBuffer(unsigned frameIndex, void* src, size_t offset, size_t len, bool setWritePos);
+  void FinalizeFrameBuffer(unsigned frameIndex);
+
   void SendCursor(const IDARG_OUT_QUERY_HWCURSOR & info, const BYTE * data);
+
+  CIVSHMEM &GetIVSHMEM() { return m_ivshmem; }
 };
 
 struct CIndirectDeviceContextWrapper

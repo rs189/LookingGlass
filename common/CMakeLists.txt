@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(lg_common LANGUAGES C)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/")
@@ -8,10 +8,6 @@ include_directories(
 )
 
 add_definitions(-D_GNU_SOURCE)
-
-if(ENABLE_BACKTRACE)
-  add_definitions(-DENABLE_BACKTRACE)
-endif()
 
 if (CMAKE_C_COMPILER_ID STREQUAL "Clang")
   add_compile_options(
@@ -40,6 +36,10 @@ set(COMMON_SOURCES
 
 add_library(lg_common STATIC ${COMMON_SOURCES})
 target_link_libraries(lg_common lg_common_platform)
+
+if(ENABLE_BACKTRACE)
+  target_compile_definitions(lg_common PUBLIC -DENABLE_BACKTRACE)
+endif()
 
 target_include_directories(lg_common
   INTERFACE

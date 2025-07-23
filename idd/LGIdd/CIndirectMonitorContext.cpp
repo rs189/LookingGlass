@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -19,8 +19,8 @@
  */
 
 #include "CIndirectMonitorContext.h"
-#include "Direct3DDevice.h"
-#include "Debug.h"
+#include "CPlatformInfo.h"
+#include "CDebug.h"
 
 CIndirectMonitorContext::CIndirectMonitorContext(_In_ IDDCX_MONITOR monitor, CIndirectDeviceContext * device) :
   m_monitor(monitor),
@@ -28,28 +28,50 @@ CIndirectMonitorContext::CIndirectMonitorContext(_In_ IDDCX_MONITOR monitor, CIn
 {
   m_terminateEvent .Attach(CreateEvent(nullptr, FALSE, FALSE, nullptr));
   m_cursorDataEvent.Attach(CreateEvent(nullptr, FALSE, FALSE, nullptr));
-  m_thread.Attach(CreateThread(nullptr, 0, _CursorThread, this, 0, nullptr));
   m_shapeBuffer = new BYTE[512 * 512 * 4];
 }
 
 CIndirectMonitorContext::~CIndirectMonitorContext()
 {
-  m_swapChain.reset();
-  SetEvent(m_terminateEvent.Get());
+  UnassignSwapChain();
   delete[] m_shapeBuffer;
 }
 
 void CIndirectMonitorContext::AssignSwapChain(IDDCX_SWAPCHAIN swapChain, LUID renderAdapter, HANDLE newFrameEvent)
 {
-  m_swapChain.reset();
-  auto device = std::make_shared<Direct3DDevice>(renderAdapter);
-  if (FAILED(device->Init()))
+reInit:
+  UnassignSwapChain();
+
+  m_dx11Device = std::make_shared<CD3D11Device>(renderAdapter);
+  if (FAILED(m_dx11Device->Init()))
   {
     WdfObjectDelete(swapChain);
     return;
   }
 
-  m_swapChain.reset(new CSwapChainProcessor(m_devContext, swapChain, device, newFrameEvent));
+  UINT64 alignSize = CPlatformInfo::GetPageSize();
+  m_dx12Device = std::make_shared<CD3D12Device>(renderAdapter);
+  switch (m_dx12Device->Init(m_devContext->GetIVSHMEM(), alignSize))
+  {
+    case CD3D12Device::SUCCESS:
+      break;
+
+    case CD3D12Device::FAILURE:
+      WdfObjectDelete(swapChain);
+      return;
+
+    case CD3D12Device::RETRY:
+      m_dx12Device.reset();
+      m_dx11Device.reset();
+      goto reInit;
+  }
+  
+  if (!m_devContext->SetupLGMP(alignSize))
+  {
+    WdfObjectDelete(swapChain);
+    DEBUG_ERROR("SetupLGMP failed");
+    return;
+  }
 
   IDARG_IN_SETUP_HWCURSOR c = {};
   c.CursorInfo.Size                  = sizeof(c.CursorInfo);
@@ -60,12 +82,30 @@ void CIndirectMonitorContext::AssignSwapChain(IDDCX_SWAPCHAIN swapChain, LUID re
   c.hNewCursorDataAvailable          = m_cursorDataEvent.Get();
   NTSTATUS status = IddCxMonitorSetupHardwareCursor(m_monitor, &c);
   if (!NT_SUCCESS(status))
-    DBGPRINT("IddCxMonitorSetupHardwareCursor Failed: %08x", status);
+  {
+    WdfObjectDelete(swapChain);
+    DEBUG_ERROR("IddCxMonitorSetupHardwareCursor Failed (0x%08x)", status);
+    return;
+  }
+
+  m_swapChain.reset(new CSwapChainProcessor(m_devContext, swapChain, m_dx11Device, m_dx12Device, newFrameEvent));
+
+  m_lastShapeId = 0;
+  m_thread.Attach(CreateThread(nullptr, 0, _CursorThread, this, 0, nullptr));
 }
 
 void CIndirectMonitorContext::UnassignSwapChain()
 {
-  m_swapChain.reset();
+  SetEvent(m_terminateEvent.Get());
+  if (m_thread.IsValid())
+    WaitForSingleObject(m_thread.Get(), INFINITE);
+
+  m_swapChain.reset();  
+  m_dx11Device.reset();
+  m_dx12Device.reset();
+
+  ResetEvent(m_terminateEvent .Get());
+  ResetEvent(m_cursorDataEvent.Get());
 }
 
 DWORD CALLBACK CIndirectMonitorContext::_CursorThread(LPVOID arg)
@@ -77,24 +117,37 @@ DWORD CALLBACK CIndirectMonitorContext::_CursorThread(LPVOID arg)
 void CIndirectMonitorContext::CursorThread()
 {
   HRESULT hr = 0;
+  bool running = true;
 
-  for (;;)
+  while(running)
   {
     HANDLE waitHandles[] =
     {
       m_cursorDataEvent.Get(),
       m_terminateEvent.Get()
     };
-    DWORD waitResult = WaitForMultipleObjects(ARRAYSIZE(waitHandles), waitHandles, FALSE, 100);
-    if (waitResult == WAIT_TIMEOUT)
-      continue;
-    else if (waitResult == WAIT_OBJECT_0 + 1)
-      break;
-    else if (waitResult != WAIT_OBJECT_0)
+
+    DWORD waitResult = WaitForMultipleObjects(
+      ARRAYSIZE(waitHandles), waitHandles, FALSE, 100);
+
+    switch (waitResult)
     {
-      hr = HRESULT_FROM_WIN32(waitResult);
-      DBGPRINT("WaitForMultipleObjects: %08", hr);
-      return;
+      case WAIT_TIMEOUT:
+        continue;
+      
+      // cursorDataEvent
+      case WAIT_OBJECT_0:
+        break;
+      
+      // terminateEvent
+      case WAIT_OBJECT_0 + 1:
+        running = false;
+        continue;
+
+      default:
+        hr = HRESULT_FROM_WIN32(waitResult);
+        DEBUG_ERROR_HR(hr, "WaitForMultipleObjects");
+        return;
     }
 
     IDARG_IN_QUERY_HWCURSOR in  = {};
@@ -106,7 +159,7 @@ void CIndirectMonitorContext::CursorThread()
     NTSTATUS status = IddCxMonitorQueryHardwareCursor(m_monitor, &in, &out);
     if (FAILED(status))
     {
-      DBGPRINT("IddCxMonitorQueryHardwareCursor failed: %08x", status);
+      DEBUG_ERROR("IddCxMonitorQueryHardwareCursor failed (0x%08x)", status);
       return;
     }
 

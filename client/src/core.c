@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -22,6 +22,9 @@
 #include "main.h"
 #include "app.h"
 #include "util.h"
+#include "kb.h"
+#include "message.h"
+#include "message.h"
 
 #include "common/time.h"
 #include "common/debug.h"
@@ -140,6 +143,13 @@ void core_setGrabQuiet(bool enable)
     core_setCursorInView(true);
     g_state.ignoreInput = false;
 
+    /* ensure the local mouse is inside the window before we capture, this fixes
+     * odd UI behaviour if the user is using focus follows mouse and the window
+     * was focused without the cursor being in window already */
+    struct DoublePoint local;
+    util_guestCurToLocal(&local);
+    core_warpPointer(local.x, local.y, true);
+
     if (g_params.grabKeyboard)
       g_state.ds->grabKeyboard();
 
@@ -180,8 +190,44 @@ bool core_warpPointer(int x, int y, bool exiting)
   return true;
 }
 
+void core_onWindowSizeChanged(unsigned width, unsigned height)
+{
+  if (!g_state.pointerQueue)
+    return;
+
+  if (g_state.srcSize.x == width && g_state.srcSize.y == height)
+    return;
+
+  const KVMFRWindowSize msg =
+  {
+    .msg.type = KVMFR_MESSAGE_WINDOWSIZE,
+    .w        = width,
+    .h        = height
+  };
+
+  uint32_t serial;
+  LGMP_STATUS status;
+  if ((status = lgmpClientSendData(g_state.pointerQueue,
+        &msg, sizeof(msg), &serial)) != LGMP_OK)
+    DEBUG_WARN("Message send failed: %s", lgmpStatusString(status));
+}
+
 void core_updatePositionInfo(void)
 {
+  if (g_params.setGuestRes && g_state.kvmfrFeatures & KVMFR_FEATURE_WINDOWSIZE)
+  {
+    LGMsg msg =
+    {
+      .type = LG_MSG_WINDOWSIZE,
+      .windowSize =
+      {
+        .width  = g_state.windowW,
+        .height = g_state.windowH
+      }
+    };
+    lgMessage_post(&msg);
+  }
+
   if (!g_state.haveSrcSize)
     goto done;
 
@@ -662,8 +708,9 @@ void core_resetOverlayInputState(void)
   g_state.io->MouseDown[ImGuiMouseButton_Left  ] = false;
   g_state.io->MouseDown[ImGuiMouseButton_Right ] = false;
   g_state.io->MouseDown[ImGuiMouseButton_Middle] = false;
-  for(int key = 0; key < ARRAY_LENGTH(g_state.io->KeysDown); key++)
-    g_state.io->KeysDown[key] = false;
+  for(int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
+    if (linux_to_imgui[key])
+      ImGuiIO_AddKeyEvent(g_state.io, linux_to_imgui[key], false);
 }
 
 void core_updateOverlayState(void)

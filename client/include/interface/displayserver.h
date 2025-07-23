@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -183,6 +183,9 @@ struct LG_DisplayServerOps
   void (*capturePointer)(void);
   void (*uncapturePointer)(void);
 
+  /* get the character code for the provided scancode */
+  int (*getCharCode)(int sc);
+
   /* exiting = true if the warp is to leave the window */
   void (*warpPointer)(int x, int y, bool exiting);
 
@@ -253,6 +256,7 @@ struct LG_DisplayServerOps
   DEBUG_ASSERT((x)->ungrabPointer      ); \
   DEBUG_ASSERT((x)->capturePointer     ); \
   DEBUG_ASSERT((x)->uncapturePointer   ); \
+  DEBUG_ASSERT((x)->getCharCode        ); \
   DEBUG_ASSERT((x)->warpPointer        ); \
   DEBUG_ASSERT((x)->realignPointer     ); \
   DEBUG_ASSERT((x)->isValidPointerPos  ); \

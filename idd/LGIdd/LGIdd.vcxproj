@@ -1,5 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="..\packages\MSBuilder.Git.0.3.0\build\MSBuilder.Git.props" Condition="Exists('..\packages\MSBuilder.Git.0.3.0\build\MSBuilder.Git.props')" />
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -36,26 +37,41 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="$(SolutionDir)LGCommon/*.cpp" />
+    <ClCompile Include="CD3D12CommandQueue.cpp" />
+    <ClCompile Include="CFrameBufferPool.cpp" />
+    <ClCompile Include="CFrameBufferResource.cpp" />
     <ClCompile Include="CIndirectDeviceContext.cpp" />
     <ClCompile Include="CIndirectMonitorContext.cpp" />
+    <ClCompile Include="CInteropResourcePool.cpp" />
+    <ClCompile Include="CInteropResource.cpp" />
     <ClCompile Include="CIVSHMEM.cpp" />
+    <ClCompile Include="CPipeServer.cpp" />
     <ClCompile Include="CPlatformInfo.cpp" />
     <ClCompile Include="CSwapChainProcessor.cpp" />
-    <ClCompile Include="Debug.cpp" />
+    <ClCompile Include="CD3D12Device.cpp" />
     <ClCompile Include="Device.cpp" />
-    <ClCompile Include="Direct3DDevice.cpp" />
+    <ClCompile Include="CD3D11Device.cpp" />
     <ClCompile Include="Driver.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="$(SolutionDir)/LGCommon/*.h" />
+    <ClInclude Include="CD3D12CommandQueue.h" />
+    <ClInclude Include="CFrameBufferPool.h" />
+    <ClInclude Include="CFrameBufferResource.h" />
     <ClInclude Include="CIndirectMonitorContext.h" />
+    <ClInclude Include="CInteropResourcePool.h" />
+    <ClInclude Include="CInteropResource.h" />
     <ClInclude Include="CIVSHMEM.h" />
+    <ClInclude Include="CPipeServer.h" />
     <ClInclude Include="CPlatformInfo.h" />
     <ClInclude Include="CSwapChainProcessor.h" />
-    <ClInclude Include="Debug.h" />
+    <ClInclude Include="CD3D12Device.h" />
     <ClInclude Include="Device.h" />
-    <ClInclude Include="Direct3DDevice.h" />
+    <ClInclude Include="CD3D11Device.h" />
     <ClInclude Include="Driver.h" />
     <ClInclude Include="CIndirectDeviceContext.h" />
     <ClInclude Include="Public.h" />
@@ -72,7 +88,7 @@
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">Win32</Platform>
     <RootNamespace>LGIdd</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <PropertyGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
@@ -85,12 +101,10 @@
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
   <PropertyGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
   <PropertyGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
@@ -145,11 +159,12 @@
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
     <IndirectDisplayDriver>true</IndirectDisplayDriver>
     <IDDCX_VERSION_MAJOR>1</IDDCX_VERSION_MAJOR>
-    <IDDCX_VERSION_MINOR>9</IDDCX_VERSION_MINOR>
+    <IDDCX_VERSION_MINOR>10</IDDCX_VERSION_MINOR>
     <Driver_SpectreMitigation>Spectre</Driver_SpectreMitigation>
     <UMDF_VERSION_MINOR>25</UMDF_VERSION_MINOR>
     <UMDF_MINIMUM_VERSION_REQUIRED>25</UMDF_MINIMUM_VERSION_REQUIRED>
     <_NT_TARGET_VERSION>0xA000005</_NT_TARGET_VERSION>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -157,11 +172,12 @@
     <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
     <IndirectDisplayDriver>true</IndirectDisplayDriver>
     <IDDCX_VERSION_MAJOR>1</IDDCX_VERSION_MAJOR>
-    <IDDCX_VERSION_MINOR>9</IDDCX_VERSION_MINOR>
+    <IDDCX_VERSION_MINOR>10</IDDCX_VERSION_MINOR>
     <Driver_SpectreMitigation>Spectre</Driver_SpectreMitigation>
     <UMDF_VERSION_MINOR>25</UMDF_VERSION_MINOR>
     <UMDF_MINIMUM_VERSION_REQUIRED>25</UMDF_MINIMUM_VERSION_REQUIRED>
     <_NT_TARGET_VERSION>0xA000005</_NT_TARGET_VERSION>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -254,10 +270,10 @@
       <WppRecorderEnabled>true</WppRecorderEnabled>
       <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
       <AdditionalOptions>/EHsc /D_ATL_NO_WIN_SUPPORT /DIDDCX_VERSION_MAJOR=1 /DIDDCX_VERSION_MINOR=9 /DIDDCX_MINIMUM_VERSION_REQUIRED=4 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\repos\LGMP\lgmp\include;$(ProjectDir)..\..\vendor;$(ProjectDir)..\..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)LGCommon;$(SolutionDir)..\repos\LGMP\lgmp\include;$(SolutionDir)..\vendor;$(SolutionDir)..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);OneCoreUAP.lib;avrt.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);OneCoreUAP.lib;avrt.lib;d3d12.lib</AdditionalDependencies>
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>SHA1</FileDigestAlgorithm>
@@ -269,10 +285,10 @@
       <WppRecorderEnabled>true</WppRecorderEnabled>
       <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
       <AdditionalOptions>/EHsc /D_ATL_NO_WIN_SUPPORT /DIDDCX_VERSION_MAJOR=1 /DIDDCX_VERSION_MINOR=9 /DIDDCX_MINIMUM_VERSION_REQUIRED=4 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..\repos\LGMP\lgmp\include;$(ProjectDir)..\..\vendor;$(ProjectDir)..\..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)LGCommon;$(SolutionDir)..\repos\LGMP\lgmp\include;$(SolutionDir)..\vendor;$(SolutionDir)..\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);OneCoreUAP.lib;avrt.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);OneCoreUAP.lib;avrt.lib;d3d12.lib</AdditionalDependencies>
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>SHA1</FileDigestAlgorithm>
@@ -315,6 +331,29 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets" />
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\MSBuilder.Git.0.3.0\build\MSBuilder.Git.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\MSBuilder.Git.0.3.0\build\MSBuilder.Git.props'))" />
+  </Target>
+  <Target Name="GenerateVersionInfo" BeforeTargets="ClCompile">
+    <Exec Command="&quot;$(Git)&quot; describe --always --abbrev=10 --dirty=+ --tags" ConsoleToMSBuild="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitVersion" />
+    </Exec>
+    <ItemGroup>
+      <VersionInfoLines Include="#define LG_VERSION_STR &quot;$(GitVersion)&quot;" />
+      <VersionInfoLines Include="#define LG_CURRENT_YEAR $(CurrentYear)" />
+    </ItemGroup>
+    <WriteLinesToFile File="VersionInfo.h" Lines="@(VersionInfoLines)" Overwrite="true" />
+  </Target>
+  <Target Name="Build" DependsOnTargets="$(BuildDependsOn)" />
+  <PropertyGroup>
+    <CurrentYear>$([System.DateTime]::Now.ToString("yyyy"))</CurrentYear>
+    <BuildDependsOn>
+      GenerateVersionInfo;
+      $(BuildDependsOn);
+    </BuildDependsOn>
+  </PropertyGroup>
 </Project>

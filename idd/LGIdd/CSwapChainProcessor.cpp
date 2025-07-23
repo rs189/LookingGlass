@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -21,29 +21,21 @@
 #include "CSwapChainProcessor.h"
 
 #include <avrt.h>
-#include "Debug.h"
-
-#define LOCK(lock) \
-  while (InterlockedCompareExchange((volatile LONG*)&(lock), 1, 0) != 0) {};
-
-#define UNLOCK(lock) \
-  InterlockedExchange((volatile LONG*)&(lock), 0);
-
-#define LOCK_CONTEXT()   LOCK(m_contextLock);
-#define UNLOCK_CONTEXT() UNLOCK(m_contextLock);
-#define LOCK_ST(st)      LOCK((st).lock);
-#define UNLOCK_ST(st)    UNLOCK((st).lock);
+#include "CDebug.h"
 
 CSwapChainProcessor::CSwapChainProcessor(CIndirectDeviceContext* devContext, IDDCX_SWAPCHAIN hSwapChain,
-    std::shared_ptr<Direct3DDevice> device, HANDLE newFrameEvent) :
+    std::shared_ptr<CD3D11Device> dx11Device, std::shared_ptr<CD3D12Device> dx12Device, HANDLE newFrameEvent) :
   m_devContext(devContext),
   m_hSwapChain(hSwapChain),
-  m_device(device),
+  m_dx11Device(dx11Device),
+  m_dx12Device(dx12Device),
   m_newFrameEvent(newFrameEvent)
-{  
+{
+  m_resPool.Init(dx11Device, dx12Device);
+  m_fbPool.Init(this);
+
   m_terminateEvent.Attach(CreateEvent(nullptr, FALSE, FALSE, nullptr));
   m_thread[0].Attach(CreateThread(nullptr, 0, _SwapChainThread, this, 0, nullptr));
-  m_thread[1].Attach(CreateThread(nullptr, 0, _FrameThread    , this, 0, nullptr));
 }
 
 CSwapChainProcessor::~CSwapChainProcessor()
@@ -54,12 +46,8 @@ CSwapChainProcessor::~CSwapChainProcessor()
   if (m_thread[1].Get())
     WaitForSingleObject(m_thread[1].Get(), INFINITE);
 
-  for(int i = 0; i < STAGING_TEXTURES; ++i)
-    if (m_cpuTex[i].map.pData)
-    {
-      m_device->m_context->Unmap(m_cpuTex[i].tex.Get(), 0);
-      m_cpuTex[i].map.pData = nullptr;
-    }
+  m_resPool.Reset();
+  m_fbPool.Reset();
 }
 
 DWORD CALLBACK CSwapChainProcessor::_SwapChainThread(LPVOID arg)
@@ -73,7 +61,7 @@ void CSwapChainProcessor::SwapChainThread()
   DWORD  avTask       = 0;
   HANDLE avTaskHandle = AvSetMmThreadCharacteristicsW(L"Distribution", &avTask);
 
-  DBGPRINT("Start");
+  DEBUG_INFO("Start Thread");
   SwapChainThreadCore();
 
   WdfObjectDelete((WDFOBJECT)m_hSwapChain);
@@ -83,54 +71,48 @@ void CSwapChainProcessor::SwapChainThread()
 }
 
 void CSwapChainProcessor::SwapChainThreadCore()
-{  
-  Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
-  HRESULT hr = m_device->m_device.As(&dxgiDevice);
+{
+  ComPtr<IDXGIDevice> dxgiDevice;
+  HRESULT hr = m_dx11Device->GetDevice().As(&dxgiDevice);
   if (FAILED(hr))
   {
-    DBGPRINT("Failed to get the dxgiDevice");
+    DEBUG_ERROR_HR(hr, "Failed to get the dxgiDevice");
     return;
   }
 
   if (IDD_IS_FUNCTION_AVAILABLE(IddCxSetRealtimeGPUPriority))
   {
-    DBGPRINT("Using IddCxSetRealtimeGPUPriority");
+    DEBUG_INFO("Using IddCxSetRealtimeGPUPriority");
     IDARG_IN_SETREALTIMEGPUPRIORITY arg;
     arg.pDevice = dxgiDevice.Get();
-    if (FAILED(IddCxSetRealtimeGPUPriority(m_hSwapChain, &arg)))
-      DBGPRINT("Failed to set realtime GPU thread priority");
+    hr = IddCxSetRealtimeGPUPriority(m_hSwapChain, &arg);
+    if (FAILED(hr))
+      DEBUG_ERROR_HR(hr, "Failed to set realtime GPU thread priority");
   }
   else
   {
-    DBGPRINT("Using SetGPUThreadPriority");
+    DEBUG_INFO("Using SetGPUThreadPriority");
     dxgiDevice->SetGPUThreadPriority(7);
   }
 
   IDARG_IN_SWAPCHAINSETDEVICE setDevice = {};
   setDevice.pDevice = dxgiDevice.Get();
 
-  LOCK_CONTEXT();
   hr = IddCxSwapChainSetDevice(m_hSwapChain, &setDevice);
-  UNLOCK_CONTEXT();
-
   if (FAILED(hr))
   {
-    DBGPRINT("IddCxSwapChainSetDevice Failed (%08x)", hr);
+    DEBUG_ERROR_HR(hr, "IddCxSwapChainSetDevice Failed");
     return;
   }
 
   UINT lastFrameNumber = 0;
   for (;;)
   {
-    ComPtr<IDXGIResource> acquiredBuffer;
     IDARG_OUT_RELEASEANDACQUIREBUFFER buffer = {};
 
-    LOCK_CONTEXT();
     hr = IddCxSwapChainReleaseAndAcquireBuffer(m_hSwapChain, &buffer);
-
     if (hr == E_PENDING)
     {
-      UNLOCK_CONTEXT();
       HANDLE waitHandles[] =
       {
         m_newFrameEvent,
@@ -152,153 +134,128 @@ void CSwapChainProcessor::SwapChainThreadCore()
       if (buffer.MetaData.PresentationFrameNumber != lastFrameNumber)
       {
         lastFrameNumber = buffer.MetaData.PresentationFrameNumber;
-        if (m_copyCount < STAGING_TEXTURES)
-        {
-          acquiredBuffer.Attach(buffer.MetaData.pSurface);
-          SwapChainNewFrame(acquiredBuffer);
-          acquiredBuffer.Reset();
-        }        
-      }
+        SwapChainNewFrame(buffer.MetaData.pSurface);
 
-      hr = IddCxSwapChainFinishedProcessingFrame(m_hSwapChain);
-      UNLOCK_CONTEXT();
-      if (FAILED(hr))
-        break;
+        // report that all GPU processing for this frame has been queued
+        hr = IddCxSwapChainFinishedProcessingFrame(m_hSwapChain);
+        if (FAILED(hr))
+        {
+          DEBUG_ERROR_HR(hr, "IddCxSwapChainFinishedProcessingFrame Failed");
+          break;
+        }
+
+      }
     }
     else
     {
-      UNLOCK_CONTEXT();
       break;
     }
   }
 }
 
-void CSwapChainProcessor::SwapChainNewFrame(ComPtr<IDXGIResource> acquiredBuffer)
+void CSwapChainProcessor::CompletionFunction(
+  CD3D12CommandQueue * queue, bool result, void * param1, void * param2)
 {
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-  if (FAILED(acquiredBuffer->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&texture)))
+  UNREFERENCED_PARAMETER(queue);
+
+  auto sc    = (CSwapChainProcessor *)param1;
+  auto fbRes = (CFrameBufferResource*)param2;
+
+  // fail gracefully
+  if (!result)
   {
-    DBGPRINT("Failed to obtain the ID3D11Texture2D from the acquiredBuffer");
+    sc->m_devContext->FinalizeFrameBuffer(fbRes->GetFrameIndex());
     return;
   }
 
-  D3D11_TEXTURE2D_DESC desc;
-  texture->GetDesc(&desc);
-
-  StagingTexture &st = m_cpuTex[m_texWIndex];
-  if (st.map.pData)
-  {
-    m_device->m_context->Unmap(st.tex.Get(), 0);
-    st.map.pData = nullptr;
-  }
-
-  if (!SetupStagingTexture(st, desc.Width, desc.Height, desc.Format))
-    return;
-
-  m_device->m_context->CopyResource(st.tex.Get(), texture.Get());
-
-  InterlockedAdd(&m_copyCount, 1);
-  if (++m_texWIndex == STAGING_TEXTURES)
-    m_texWIndex = 0;
+  if (sc->m_dx12Device->IsIndirectCopy())
+    sc->m_devContext->WriteFrameBuffer(
+      fbRes->GetFrameIndex(),
+      fbRes->GetMap(), 0, fbRes->GetFrameSize(), true);
+  else
+    sc->m_devContext->FinalizeFrameBuffer(fbRes->GetFrameIndex());
 }
 
-DWORD CALLBACK CSwapChainProcessor::_FrameThread(LPVOID arg)
+bool CSwapChainProcessor::SwapChainNewFrame(ComPtr<IDXGIResource> acquiredBuffer)
 {
-  reinterpret_cast<CSwapChainProcessor*>(arg)->FrameThread();
-  return 0;
-}
-
-void CSwapChainProcessor::FrameThread()
-{
-  for(;;)
+  ComPtr<ID3D11Texture2D> texture;
+  HRESULT hr = acquiredBuffer.As(&texture);
+  if (FAILED(hr))
   {
-    if (WaitForSingleObject(m_terminateEvent.Get(), 0) == WAIT_OBJECT_0)
-      break;
-
-    if (!m_copyCount)
-    {
-      Sleep(0);
-      continue;
-    }
-
-    StagingTexture & st = m_cpuTex[m_texRIndex];
-    LOCK(st);
-
-    LOCK_CONTEXT();
-    HRESULT status = m_device->m_context->Map(st.tex.Get(), 0, D3D11_MAP_READ,
-      D3D11_MAP_FLAG_DO_NOT_WAIT, &st.map);
-    UNLOCK_CONTEXT();
-
-    if (FAILED(status))
-    {
-      UNLOCK(st);
-      if (status == DXGI_ERROR_WAS_STILL_DRAWING)
-        continue;
-
-      DBGPRINT("Failed to map staging texture");
-
-      InterlockedAdd(&m_copyCount, -1);
-      if (++m_texRIndex == STAGING_TEXTURES)
-        m_texRIndex = 0;
-
-      continue;
-    }
-
-    m_devContext->SendFrame(st.width, st.height, st.map.RowPitch, st.format, st.map.pData);
-    InterlockedAdd(&m_copyCount, -1);
-    m_lastIndex = m_texRIndex;
-    if (++m_texRIndex == STAGING_TEXTURES)
-      m_texRIndex = 0;
-
-    UNLOCK(st);
-  }
-}
-
-bool CSwapChainProcessor::SetupStagingTexture(StagingTexture & st, int width, int height, DXGI_FORMAT format)
-{
-  if (st.width == width && st.height == height && st.format == format)
-    return true;
-
-  st.tex.Reset();
-  st.width  = width;
-  st.height = height;
-  st.format = format;
-
-  D3D11_TEXTURE2D_DESC desc = {};
-  desc.Width              = width;
-  desc.Height             = height;
-  desc.MipLevels          = 1;
-  desc.ArraySize          = 1;
-  desc.SampleDesc.Count   = 1;
-  desc.SampleDesc.Quality = 0;
-  desc.Usage              = D3D11_USAGE_STAGING;
-  desc.Format             = format;
-  desc.BindFlags          = 0;
-  desc.CPUAccessFlags     = D3D11_CPU_ACCESS_READ;
-  desc.MiscFlags          = 0;
-
-  if (FAILED(m_device->m_device->CreateTexture2D(&desc, nullptr, &st.tex)))
-  {
-    DBGPRINT("Failed to create staging texture");
+    DEBUG_ERROR_HR(hr, "Failed to obtain the ID3D11Texture2D from the acquiredBuffer");
     return false;
   }
 
-  return true;
-}
-
-void CSwapChainProcessor::ResendLastFrame()
-{
-  LOCK_CONTEXT()
-  StagingTexture & st = m_cpuTex[m_lastIndex];
-  LOCK_ST(st);
-  UNLOCK_CONTEXT();
-
-  if (!st.map.pData)
+  CInteropResource * srcRes = m_resPool.Get(texture);
+  if (!srcRes)
   {
-    UNLOCK_ST(st);
-    return;
+    DEBUG_ERROR("Failed to get a CInteropResource from the pool");
+    return false;
   }
 
-  m_devContext->SendFrame(st.width, st.height, st.map.RowPitch, st.format, st.map.pData);
-  UNLOCK_ST(st);
+  /**
+   * Even though we have not performed any copy/draw operations we still need to
+   * use a fence. Because we share this texture with DirectX12 it is able to
+   * read from it before the desktop duplication API has finished updating it.
+   */
+  srcRes->Signal();
+
+  //FIXME: handle dirty rects
+  srcRes->SetFullDamage();
+
+  D3D12_RESOURCE_DESC desc = srcRes->GetRes()->GetDesc();
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
+  m_dx12Device->GetDevice()->GetCopyableFootprints(
+    &desc,
+    0,
+    1,
+    0,
+    &layout,
+    NULL, 
+    NULL,
+    NULL);
+
+  auto buffer = m_devContext->PrepareFrameBuffer(
+    (int)desc.Width,
+    (int)desc.Height,
+    (int)layout.Footprint.RowPitch,
+    desc.Format);
+
+  if (!buffer.mem)
+    return false;
+
+  CFrameBufferResource * fbRes = m_fbPool.Get(buffer,
+    (size_t)layout.Footprint.RowPitch * desc.Height);
+
+  if (!fbRes)
+  {
+    DEBUG_ERROR("Failed to get a CFrameBufferResource from the pool");
+    return false;
+  }
+
+  auto copyQueue = m_dx12Device->GetCopyQueue();
+  if (!copyQueue)
+  {
+    DEBUG_ERROR("Failed to get a CopyQueue");
+    return false;
+  }
+
+  copyQueue->SetCompletionCallback(&CompletionFunction, this, fbRes);
+
+  D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+  srcLoc.pResource        = srcRes->GetRes().Get();
+  srcLoc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  srcLoc.SubresourceIndex = 0;
+
+  D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+  dstLoc.pResource       = fbRes->Get().Get();
+  dstLoc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+  dstLoc.PlacedFootprint = layout;
+
+  srcRes->Sync(*copyQueue);
+  copyQueue->GetGfxList()->CopyTextureRegion(
+    &dstLoc, 0, 0, 0, &srcLoc, NULL);
+  copyQueue->Execute();
+
+  return true;
 }

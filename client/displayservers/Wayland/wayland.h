@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -277,6 +277,7 @@ void waylandUncapturePointer(void);
 void waylandRealignPointer(void);
 void waylandWarpPointer(int x, int y, bool exiting);
 void waylandGuestPointerUpdated(double x, double y, double localX, double localY);
+int waylandGetCharCode(int key);
 
 // output module
 bool waylandOutputInit(void);

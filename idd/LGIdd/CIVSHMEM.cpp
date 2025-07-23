@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <winioctl.h>
 
-#include "Debug.h"
+#include "CDebug.h"
 #include "ivshmem/ivshmem.h"
 
 CIVSHMEM::CIVSHMEM()
@@ -72,10 +72,12 @@ bool CIVSHMEM::Init()
     m_devices.push_back(data);
   }
 
-  if (GetLastError() != ERROR_NO_MORE_ITEMS)
+  HRESULT hr = GetLastError();
+  if (hr != ERROR_NO_MORE_ITEMS)
   {
     m_devices.clear();
     SetupDiDestroyDeviceInfoList(devInfoSet);
+    DEBUG_ERROR_HR(hr, "Enumeration Failed");
     return false;
   }
 
@@ -102,7 +104,7 @@ bool CIVSHMEM::Init()
   {
     DWORD bus = it->busAddr >> 32;
     DWORD addr = it->busAddr & 0xFFFFFFFF;
-    DBGPRINT("IVSHMEM %u%c on bus 0x%lx, device 0x%lx, function 0x%lx\n",
+    DEBUG_INFO("IVSHMEM %u%c on bus 0x%lx, device 0x%lx, function 0x%lx",
       i, i == shmDevice ? '*' : ' ', bus, addr >> 16, addr & 0xFFFF);
 
     if (i == shmDevice)
@@ -111,12 +113,14 @@ bool CIVSHMEM::Init()
 
   if (!device)
   {
+    DEBUG_ERROR("Failed to match a shmDevice");
     SetupDiDestroyDeviceInfoList(devInfoSet);
     return false;
   }
 
   if (SetupDiEnumDeviceInterfaces(devInfoSet, &devInfoData, &GUID_DEVINTERFACE_IVSHMEM, 0, &devInterfaceData) == FALSE)
   {
+    DEBUG_ERROR_HR(GetLastError(), "SetupDiEnumDeviceInterfaces");
     SetupDiDestroyDeviceInfoList(devInfoSet);
     return false;
   }
@@ -125,6 +129,7 @@ bool CIVSHMEM::Init()
   SetupDiGetDeviceInterfaceDetail(devInfoSet, &devInterfaceData, nullptr, 0, &reqSize, nullptr);
   if (!reqSize)
   {
+    DEBUG_ERROR_HR(GetLastError(), "SetupDiGetDeviceInterfaceDetail");
     SetupDiDestroyDeviceInfoList(devInfoSet);
     return false;
   }
@@ -133,6 +138,7 @@ bool CIVSHMEM::Init()
   infData->cbSize = sizeof(PSP_DEVICE_INTERFACE_DETAIL_DATA);
   if (!SetupDiGetDeviceInterfaceDetail(devInfoSet, &devInterfaceData, infData, reqSize, nullptr, nullptr))
   {
+    DEBUG_ERROR_HR(GetLastError(), "SetupDiGetDeviceInterfaceDetail");
     SetupDiDestroyDeviceInfoList(devInfoSet);
     return false;
   }
@@ -140,11 +146,13 @@ bool CIVSHMEM::Init()
   m_handle = CreateFile(infData->DevicePath, 0, 0, nullptr, OPEN_EXISTING, 0, 0);
   if (m_handle == INVALID_HANDLE_VALUE)
   {
+    DEBUG_ERROR_HR(GetLastError(), "CreateFile");
     SetupDiDestroyDeviceInfoList(devInfoSet);
     return false;
   }
 
   SetupDiDestroyDeviceInfoList(devInfoSet);
+  DEBUG_TRACE("IVSHMEM Initialized");
   return true;
 }
 
@@ -153,7 +161,7 @@ bool CIVSHMEM::Open()
   IVSHMEM_SIZE size;
   if (!DeviceIoControl(m_handle, IOCTL_IVSHMEM_REQUEST_SIZE, nullptr, 0, &size, sizeof(size), nullptr, nullptr))
   {
-    DBGPRINT("Failed to request ivshmem size");
+    DEBUG_ERROR_HR(GetLastError(), "Failed to request ivshmem size");
     return false;
   }
 
@@ -163,7 +171,7 @@ bool CIVSHMEM::Open()
   config.cacheMode = IVSHMEM_CACHE_WRITECOMBINED;
   if (!DeviceIoControl(m_handle, IOCTL_IVSHMEM_REQUEST_MMAP, &config, sizeof(config), &map, sizeof(map), nullptr, nullptr))
   {
-    DBGPRINT("Failed to request ivshmem mmap");
+    DEBUG_ERROR_HR(GetLastError(), "Failed to request ivshmem mmap");
     return false;
   }
 
@@ -180,7 +188,7 @@ void CIVSHMEM::Close()
 
   if (!DeviceIoControl(m_handle, IOCTL_IVSHMEM_RELEASE_MMAP, nullptr, 0, nullptr, 0, nullptr, nullptr))
   {
-    DBGPRINT("Failed to release ivshmem mmap");
+    DEBUG_ERROR("Failed to release ivshmem mmap");
     return;
   }
 

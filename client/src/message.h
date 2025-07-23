@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,11 +18,49 @@
  * Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#pragma once
+#ifndef _H_LG_MSG_
+#define _H_LG_MSG_
 
-#include <Windows.h>
-#include <tchar.h>
+#include <stdbool.h>
 
-VOID _DBGPRINT(PCSTR kszFunction, INT iLineNumber, LPCSTR kszDebugFormatString, ...);
-#define DBGPRINT(kszDebugFormatString, ...) \
-  _DBGPRINT(__FUNCTION__, __LINE__, kszDebugFormatString, __VA_ARGS__)
+typedef enum LGMsgType
+{
+  /* The LG client window size changed
+   * Note:
+   *   This message is debounced to avoid flooding the guest with resize events
+   */
+  LG_MSG_WINDOWSIZE
+}
+LGMsgType;
+
+typedef struct LGMsg
+{
+  LGMsgType type;
+  union
+  {
+    //LG_MSG_WINDOWSIZE
+    struct
+    {
+      unsigned width;
+      unsigned height;
+    }
+    windowSize;
+
+    //LG_MSG_VIDEO
+    struct
+    {
+      bool enabled;
+    }
+    video;
+  };
+}
+LGMsg;
+
+bool lgMessage_init(void);
+void lgMessage_deinit(void);
+
+void lgMessage_process(void);
+
+void lgMessage_post(const LGMsg * msg);
+
+#endif

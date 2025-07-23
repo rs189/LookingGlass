@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -21,19 +21,32 @@
 #include "driver.h"
 #include "driver.tmh"
 
+#include "CDebug.h"
 #include "CPlatformInfo.h"
+#include "VersionInfo.h"
+#include "CPipeServer.h"
 
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT  DriverObject, _In_ PUNICODE_STRING RegistryPath)
 {
-  WDF_DRIVER_CONFIG config;
-  NTSTATUS status;
-  WDF_OBJECT_ATTRIBUTES attributes;
+  g_debug.Init("looking-glass-idd");
+  DEBUG_INFO("Looking Glass IDD Driver (" LG_VERSION_STR ")");
 
+  NTSTATUS status = STATUS_SUCCESS;
 #if UMDF_VERSION_MAJOR == 2 && UMDF_VERSION_MINOR == 0
   WPP_INIT_TRACING(MYDRIVER_TRACING_ID);
 #else
   WPP_INIT_TRACING(DriverObject, RegistryPath);
 #endif
+
+  if (!g_pipe.Init())
+  {
+    status = STATUS_UNSUCCESSFUL;
+    DEBUG_ERROR("Failed to setup IPC pipe");
+    goto fail;
+  }
+
+  WDF_DRIVER_CONFIG config;
+  WDF_OBJECT_ATTRIBUTES attributes;
 
   TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
 
@@ -46,15 +59,18 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT  DriverObject, _In_ PUNICODE_STRING Reg
   if (!NT_SUCCESS(status))
   {
     TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER, "WdfDriverCreate failed %!STATUS!", status);
-#if UMDF_VERSION_MAJOR == 2 && UMDF_VERSION_MINOR == 0
-    WPP_CLEANUP();
-#else
-    WPP_CLEANUP(DriverObject);
-#endif
-    return status;
+    goto fail;
   }
 
   TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Exit");
+  return status;
+
+fail:
+#if UMDF_VERSION_MAJOR == 2 && UMDF_VERSION_MINOR == 0
+  WPP_CLEANUP();
+#else
+  WPP_CLEANUP(DriverObject);
+#endif
   return status;
 }
 
@@ -74,6 +90,8 @@ VOID LGIddEvtDriverContextCleanup(_In_ WDFOBJECT DriverObject)
   UNREFERENCED_PARAMETER(DriverObject);
 
   TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "%!FUNC! Entry");
+
+  g_pipe.DeInit();
 
 #if UMDF_VERSION_MAJOR == 2 && UMDF_VERSION_MINOR == 0
   WPP_CLEANUP();

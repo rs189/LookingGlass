@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -59,8 +59,8 @@ void app_handleButtonPress(int button);
 void app_handleButtonRelease(int button);
 void app_handleWheelMotion(double motion);
 void app_handleKeyboardTyped(const char * typed);
-void app_handleKeyPress(int scancode, int charcode);
-void app_handleKeyRelease(int scancode, int charcode);
+void app_handleKeyPress(int scancode);
+void app_handleKeyRelease(int scancode);
 void app_handleKeyboardModifiers(bool ctrl, bool shift, bool alt, bool super);
 void app_handleKeyboardLEDs(bool numLock, bool capsLock, bool scrollLock);
 void app_handleEnterEvent(bool entered);

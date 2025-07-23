@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,13 +18,14 @@
  * Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#include "app.h"
+#include "app_internal.h"
 
 #include "main.h"
 #include "core.h"
 #include "util.h"
 #include "clipboard.h"
 #include "render_queue.h"
+#include "evdev.h"
 
 #include "kb.h"
 
@@ -119,7 +120,7 @@ void app_handleFocusEvent(bool focused)
     if (g_params.releaseKeysOnFocusLoss)
       for (int key = 0; key < KEY_MAX; key++)
         if (g_state.keyDown[key])
-          app_handleKeyRelease(key, 0);
+          app_handleKeyReleaseInternal(key);
 
     g_state.escapeActive = false;
 
@@ -311,7 +312,7 @@ void app_handleWheelMotion(double motion)
     g_state.io->MouseWheel -= motion;
 }
 
-void app_handleKeyPress(int sc, int charcode)
+void app_handleKeyPressInternal(int sc)
 {
   if (!app_isOverlayMode() || !g_state.io->WantCaptureKeyboard)
   {
@@ -327,6 +328,7 @@ void app_handleKeyPress(int sc, int charcode)
     {
       g_state.escapeAction = sc;
       KeybindHandle handle;
+      int charcode = g_state.ds->getCharCode(sc);
       ll_forEachNL(g_state.bindings, item, handle)
       {
         if ((handle->sc       && handle->sc       == sc       ) ||
@@ -346,8 +348,8 @@ void app_handleKeyPress(int sc, int charcode)
       app_setOverlay(false);
     else
     {
-      if (sc < sizeof(g_state.io->KeysDown))
-        g_state.io->KeysDown[sc] = true;
+      if (linux_to_imgui[sc])
+        ImGuiIO_AddKeyEvent(g_state.io, linux_to_imgui[sc], true);
     }
     return;
   }
@@ -374,7 +376,7 @@ void app_handleKeyPress(int sc, int charcode)
   }
 }
 
-void app_handleKeyRelease(int sc, int charcode)
+void app_handleKeyReleaseInternal(int sc)
 {
   if (g_state.escapeActive)
   {
@@ -391,8 +393,8 @@ void app_handleKeyRelease(int sc, int charcode)
 
   if (app_isOverlayMode())
   {
-    if (sc < sizeof(g_state.io->KeysDown))
-      g_state.io->KeysDown[sc] = false;
+    if (linux_to_imgui[sc])
+      ImGuiIO_AddKeyEvent(g_state.io, linux_to_imgui[sc], false);
     return;
   }
 
@@ -417,6 +419,18 @@ void app_handleKeyRelease(int sc, int charcode)
     DEBUG_ERROR("app_handleKeyRelease: failed to send message");
     return;
   }
+}
+
+void app_handleKeyPress(int sc)
+{
+  if (!evdev_isExclusive())
+    app_handleKeyPressInternal(sc);
+}
+
+void app_handleKeyRelease(int sc)
+{
+  if (!evdev_isExclusive())
+    app_handleKeyReleaseInternal(sc);
 }
 
 void app_handleKeyboardTyped(const char * typed)

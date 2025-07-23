@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -72,6 +72,7 @@ struct AppState
   bool             modSuper;
   uint64_t         lastImGuiFrame;
   bool             renderImGuiTwice;
+  bool             exclusiveEvdev;
 
   struct LG_DisplayServerOps * ds;
   bool                         dsInitialized;
@@ -171,6 +172,7 @@ struct AppParams
   bool                 center;
   int                  x, y;
   unsigned int         w, h;
+  bool                 setGuestRes;
   int                  fpsMin;
   LG_RendererRotate    winRotate;
   bool                 useSpice;
@@ -202,6 +204,7 @@ struct AppParams
   int                  uiSize;
   bool                 jitRender;
   bool                 requestActivation;
+  bool                 disableWaitingMessage;
 
   unsigned int         cursorPollInterval;
   unsigned int         framePollInterval;

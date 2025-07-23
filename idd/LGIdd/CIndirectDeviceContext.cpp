@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -22,7 +22,9 @@
 #include "CIndirectMonitorContext.h"
 
 #include "CPlatformInfo.h"
-#include "Debug.h"
+#include "CPipeServer.h"
+#include "CDebug.h"
+#include "VersionInfo.h"
 
 #include <sstream>
 
@@ -40,30 +42,57 @@ static const struct LGMPQueueConfig POINTER_QUEUE_CONFIG =
   1000                //subTimeout
 };
 
-CIndirectDeviceContext::~CIndirectDeviceContext()
+const DWORD DefaultDisplayModes[][3] =
 {
-  if (m_lgmp == nullptr)
-    return;
+  {7680, 4800, 120}, {7680, 4320, 120}, {6016, 3384, 120}, {5760, 3600, 120},
+  {5760, 3240, 120}, {5120, 2800, 120}, {4096, 2560, 120}, {4096, 2304, 120},
+  {3840, 2400, 120}, {3840, 2160, 120}, {3200, 2400, 120}, {3200, 1800, 120},
+  {3008, 1692, 120}, {2880, 1800, 120}, {2880, 1620, 120}, {2560, 1600, 120},
+  {2560, 1440, 120}, {1920, 1440, 120}, {1920, 1200, 120}, {1920, 1080, 120},
+  {1600, 1200, 120}, {1600, 1024, 120}, {1600, 1050, 120}, {1600, 900 , 120},
+  {1440, 900 , 120}, {1400, 1050, 120}, {1366, 768 , 120}, {1360, 768 , 120},
+  {1280, 1024, 120}, {1280, 960 , 120}, {1280, 800 , 120}, {1280, 768 , 120},
+  {1280, 720 , 120}, {1280, 600 , 120}, {1152, 864 , 120}, {1024, 768 , 120},
+  {800 , 600 , 120}, {640 , 480 , 120}
+};
 
-  if (m_lgmpTimer)
+static const BYTE EDID[] =
+{
+  0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x30,0xE8,0x34,0x12,0xC9,0x07,0xCC,0x00,
+  0x01,0x21,0x01,0x04,0xA5,0x3C,0x22,0x78,0xFB,0x6C,0xE5,0xA5,0x55,0x50,0xA0,0x23,
+  0x0B,0x50,0x54,0x00,0x02,0x00,0xD1,0xC0,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
+  0x01,0x01,0x01,0x01,0x01,0x01,0x58,0xE3,0x00,0xA0,0xA0,0xA0,0x29,0x50,0x30,0x20,
+  0x35,0x00,0x55,0x50,0x21,0x00,0x00,0x1A,0x00,0x00,0x00,0xFF,0x00,0x4C,0x6F,0x6F,
+  0x6B,0x69,0x6E,0x67,0x47,0x6C,0x61,0x73,0x73,0x0A,0x00,0x00,0x00,0xFC,0x00,0x4C,
+  0x6F,0x6F,0x6B,0x69,0x6E,0x67,0x20,0x47,0x6C,0x61,0x73,0x73,0x00,0x00,0x00,0xFD,
+  0x00,0x28,0x9B,0xFA,0xFA,0x40,0x01,0x0A,0x20,0x20,0x20,0x20,0x20,0x20,0x00,0x4A
+};
+
+const DWORD DefaultPreferredDisplayMode = 19;
+
+void CIndirectDeviceContext::PopulateDefaultModes(bool setDefaultMode)
+{
+  m_displayModes.reserve(m_displayModes.size() +
+    ARRAYSIZE(DefaultDisplayModes));
+
+  for (int i = 0; i < ARRAYSIZE(DefaultDisplayModes); ++i)
   {
-    WdfTimerStop(m_lgmpTimer, TRUE);
-    m_lgmpTimer = nullptr;
+    DisplayMode m;
+    m.width     = DefaultDisplayModes[i][0];
+    m.height    = DefaultDisplayModes[i][1];
+    m.refresh   = DefaultDisplayModes[i][2];
+    m.preferred = setDefaultMode && (i == DefaultPreferredDisplayMode);
+    m_displayModes.push_back(m);
   }
-
-  for(int i = 0; i < LGMP_Q_FRAME_LEN; ++i)
-    lgmpHostMemFree(&m_frameMemory[i]);
-  for (int i = 0; i < LGMP_Q_POINTER_LEN; ++i)
-    lgmpHostMemFree(&m_pointerMemory[i]);
-  for (int i = 0; i < POINTER_SHAPE_BUFFERS; ++i)
-    lgmpHostMemFree(&m_pointerShapeMemory[i]);
-  lgmpHostFree(&m_lgmp);
 }
 
 void CIndirectDeviceContext::InitAdapter()
 {
-  if (!SetupLGMP())
+  if (!m_ivshmem.Init() || !m_ivshmem.Open())
     return;
+
+  m_displayModes.clear();
+  PopulateDefaultModes(true);
 
   IDDCX_ADAPTER_CAPS caps = {};
   caps.Size = sizeof(caps);
@@ -82,7 +111,7 @@ void CIndirectDeviceContext::InitAdapter()
   caps.EndPointDiagnostics.GammaSupport     = IDDCX_FEATURE_IMPLEMENTATION_NONE;
   caps.EndPointDiagnostics.TransmissionType = IDDCX_TRANSMISSION_TYPE_OTHER;
 
-  caps.EndPointDiagnostics.pEndPointFriendlyName     = L"Looking Glass IDD Device";
+  caps.EndPointDiagnostics.pEndPointFriendlyName     = L"Looking Glass IDD Driver";
   caps.EndPointDiagnostics.pEndPointManufacturerName = L"Looking Glass";
   caps.EndPointDiagnostics.pEndPointModelName        = L"Looking Glass";
 
@@ -104,7 +133,7 @@ void CIndirectDeviceContext::InitAdapter()
   NTSTATUS status = IddCxAdapterInitAsync(&init, &initOut);
   if (!NT_SUCCESS(status))
   {
-    DBGPRINT("IddCxAdapterInitAsync Failed");
+    DEBUG_ERROR_HR(status, "IddCxAdapterInitAsync Failed");
     return;
   }
 
@@ -133,20 +162,8 @@ void CIndirectDeviceContext::InitAdapter()
   factory->Release();
 
   auto * wrapper = WdfObjectGet_CIndirectDeviceContextWrapper(m_adapter);
-  wrapper->context = this;
+  wrapper->context = this;  
 }
-
-static const BYTE EDID[] =
-{
-  0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x30,0xE8,0x34,0x12,0xC9,0x07,0xCC,0x00,
-  0x01,0x21,0x01,0x04,0xA5,0x3C,0x22,0x78,0xFB,0x6C,0xE5,0xA5,0x55,0x50,0xA0,0x23,
-  0x0B,0x50,0x54,0x00,0x02,0x00,0xD1,0xC0,0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
-  0x01,0x01,0x01,0x01,0x01,0x01,0x58,0xE3,0x00,0xA0,0xA0,0xA0,0x29,0x50,0x30,0x20,
-  0x35,0x00,0x55,0x50,0x21,0x00,0x00,0x1A,0x00,0x00,0x00,0xFF,0x00,0x4C,0x6F,0x6F,
-  0x6B,0x69,0x6E,0x67,0x47,0x6C,0x61,0x73,0x73,0x0A,0x00,0x00,0x00,0xFC,0x00,0x4C,
-  0x6F,0x6F,0x6B,0x69,0x6E,0x67,0x20,0x47,0x6C,0x61,0x73,0x73,0x00,0x00,0x00,0xFD,
-  0x00,0x28,0x9B,0xFA,0xFA,0x40,0x01,0x0A,0x20,0x20,0x20,0x20,0x20,0x20,0x00,0x4A
-};
 
 void CIndirectDeviceContext::FinishInit(UINT connectorIndex)
 {
@@ -181,7 +198,7 @@ void CIndirectDeviceContext::FinishInit(UINT connectorIndex)
   NTSTATUS status = IddCxMonitorCreate(m_adapter, &create, &createOut);
   if (!NT_SUCCESS(status))
   {
-    DBGPRINT("IddCxMonitorCreate Failed");
+    DEBUG_ERROR_HR(status, "IddCxMonitorCreate Failed");
     return;
   }
 
@@ -191,20 +208,235 @@ void CIndirectDeviceContext::FinishInit(UINT connectorIndex)
 
   IDARG_OUT_MONITORARRIVAL out;
   status = IddCxMonitorArrival(m_monitor, &out);
+  if (FAILED(status))
+  {
+    DEBUG_ERROR_HR(status, "IddCxMonitorArrival Failed");
+    return;
+  }
 }
 
-bool CIndirectDeviceContext::SetupLGMP()
+void CIndirectDeviceContext::ReplugMonitor()
 {
-  if (!m_ivshmem.Init() || !m_ivshmem.Open())
-    return false;
+  if (m_monitor == WDF_NO_HANDLE)
+  {
+    FinishInit(0);
+    return;
+  }
 
+  if (m_replugMonitor)
+    return;
+
+  DEBUG_TRACE("ReplugMonitor");
+  m_replugMonitor = true;
+  NTSTATUS status = IddCxMonitorDeparture(m_monitor);
+  if (!NT_SUCCESS(status))
+  {
+    m_replugMonitor = false;
+    DEBUG_ERROR("IddCxMonitorDeparture Failed (0x%08x)", status);
+    return;
+  }
+}
+
+void CIndirectDeviceContext::OnAssignSwapChain()
+{
+  if (m_setCustomMode)
+  {
+    m_setCustomMode = false;
+    g_pipe.SetDisplayMode(m_customMode.width, m_customMode.height);
+  }
+}
+
+void CIndirectDeviceContext::OnUnassignedSwapChain()
+{
+  if (m_replugMonitor)
+  {
+    m_replugMonitor = false;
+    FinishInit(0);
+  }
+}
+
+static inline void FillSignalInfo(DISPLAYCONFIG_VIDEO_SIGNAL_INFO & mode, DWORD width, DWORD height, DWORD vsync, bool monitorMode)
+{
+  mode.totalSize.cx = mode.activeSize.cx = width;
+  mode.totalSize.cy = mode.activeSize.cy = height;
+
+  mode.AdditionalSignalInfo.vSyncFreqDivider = monitorMode ? 0 : 1;
+  mode.AdditionalSignalInfo.videoStandard    = 255;
+  
+  mode.vSyncFreq.Numerator   = vsync;
+  mode.vSyncFreq.Denominator = 1;
+  mode.hSyncFreq.Numerator   = vsync * height;
+  mode.hSyncFreq.Denominator = 1;
+
+  mode.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+  mode.pixelRate        = ((UINT64)vsync) * ((UINT64)width) * ((UINT64)height);
+}
+
+NTSTATUS CIndirectDeviceContext::ParseMonitorDescription(
+  const IDARG_IN_PARSEMONITORDESCRIPTION* inArgs,
+  IDARG_OUT_PARSEMONITORDESCRIPTION* outArgs)
+{
+  outArgs->MonitorModeBufferOutputCount = (UINT)m_displayModes.size();
+  if (inArgs->MonitorModeBufferInputCount < (UINT)m_displayModes.size())
+    return (inArgs->MonitorModeBufferInputCount > 0) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+
+  auto * mode = inArgs->pMonitorModes;
+  for (auto it = m_displayModes.cbegin(); it != m_displayModes.cend(); ++it, ++mode)
+  {
+    mode->Size = sizeof(IDDCX_MONITOR_MODE);
+    mode->Origin = IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR;
+    FillSignalInfo(mode->MonitorVideoSignalInfo, it->width, it->height, it->refresh, true);
+
+    if (it->preferred)
+      outArgs->PreferredMonitorModeIdx =
+        (UINT)std::distance(m_displayModes.cbegin(), it);
+  }
+
+  return STATUS_SUCCESS;
+}
+
+NTSTATUS CIndirectDeviceContext::MonitorGetDefaultModes(
+  const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* inArgs,
+  IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* outArgs)
+{
+  outArgs->DefaultMonitorModeBufferOutputCount = (UINT)m_displayModes.size();
+  if (inArgs->DefaultMonitorModeBufferInputCount < (UINT)m_displayModes.size())
+    return (inArgs->DefaultMonitorModeBufferInputCount > 0) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+
+  auto* mode = inArgs->pDefaultMonitorModes;
+  for (auto it = m_displayModes.cbegin(); it != m_displayModes.cend(); ++it, ++mode)
+  {
+    mode->Size = sizeof(IDDCX_MONITOR_MODE);
+    mode->Origin = IDDCX_MONITOR_MODE_ORIGIN_DRIVER;
+    FillSignalInfo(mode->MonitorVideoSignalInfo, it->width, it->height, it->refresh, true);
+
+    if (it->preferred)
+      outArgs->PreferredMonitorModeIdx =
+      (UINT)std::distance(m_displayModes.cbegin(), it);
+  }
+
+  return STATUS_SUCCESS;
+}
+
+NTSTATUS CIndirectDeviceContext::MonitorQueryTargetModes(
+  const IDARG_IN_QUERYTARGETMODES* inArgs,
+  IDARG_OUT_QUERYTARGETMODES* outArgs)
+{
+  outArgs->TargetModeBufferOutputCount = (UINT)m_displayModes.size();
+  if (inArgs->TargetModeBufferInputCount < (UINT)m_displayModes.size())
+    return (inArgs->TargetModeBufferInputCount > 0) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+
+  auto* mode = inArgs->pTargetModes;
+  for (auto it = m_displayModes.cbegin(); it != m_displayModes.cend(); ++it, ++mode)
+  {
+    mode->Size = sizeof(IDDCX_TARGET_MODE);
+    FillSignalInfo(mode->TargetVideoSignalInfo.targetVideoSignalInfo, it->width, it->height, it->refresh, false);
+  }
+
+  return STATUS_SUCCESS;
+}
+
+void CIndirectDeviceContext::SetResolution(int width, int height)
+{
+  m_displayModes.clear();
+  m_customMode.width     = width;
+  m_customMode.height    = height;
+  m_customMode.refresh   = 120;
+  m_customMode.preferred = true;
+  m_displayModes.push_back(m_customMode);
+  PopulateDefaultModes(false);
+
+  m_setCustomMode = true;
+
+#if 1
+  ReplugMonitor();
+#else
+
+  if (IDD_IS_FUNCTION_AVAILABLE(IddCxMonitorUpdateModes2))
+  {
+    IDDCX_TARGET_MODE2* modes = (IDDCX_TARGET_MODE2*)_malloca(
+      m_displayModes.size() * sizeof(IDDCX_TARGET_MODE2));
+
+    if (!modes)
+    {
+      DEBUG_ERROR("Failed to allocate memory for the mode list");
+      return;
+    }
+
+    ZeroMemory(modes, m_displayModes.size() * sizeof(IDDCX_TARGET_MODE2));
+
+    IDARG_IN_UPDATEMODES2 um = {};
+    um.Reason          = IDDCX_UPDATE_REASON_OTHER;
+    um.TargetModeCount = (UINT)m_displayModes.size();
+    um.pTargetModes    = modes;
+    auto* mode = modes;
+    for (auto it = m_displayModes.cbegin(); it != m_displayModes.cend(); ++it, ++mode)
+    {      
+      mode->Size                 = sizeof(IDDCX_TARGET_MODE2);
+      mode->RequiredBandwidth    = (UINT64)(it->width * it->height * it->refresh * 32);
+      mode->BitsPerComponent.Rgb = IDDCX_BITS_PER_COMPONENT_8;
+
+      FillSignalInfo(mode->TargetVideoSignalInfo.targetVideoSignalInfo, it->width, it->height, it->refresh, true);
+    }
+
+    NTSTATUS status = IddCxMonitorUpdateModes2(m_monitor, &um);
+    if (!NT_SUCCESS(status))
+      DEBUG_ERROR("IddCxMonitorUpdateModes2 Failed (0x%08x)", status);
+
+    _freea(modes);
+  }
+  else
+  {
+    IDDCX_TARGET_MODE* modes = (IDDCX_TARGET_MODE*)_malloca(
+      m_displayModes.size() * sizeof(IDDCX_TARGET_MODE));
+
+    if (!modes)
+    {
+      DEBUG_ERROR("Failed to allocate memory for the mode list");
+      return;
+    }
+
+    IDARG_IN_UPDATEMODES um = {};
+    um.Reason          = IDDCX_UPDATE_REASON_OTHER;
+    um.TargetModeCount = (UINT)m_displayModes.size();
+    um.pTargetModes    = modes;
+  
+    auto* mode = modes;
+    for (auto it = m_displayModes.cbegin(); it != m_displayModes.cend(); ++it, ++mode)
+    {
+      mode->Size              = sizeof(IDDCX_TARGET_MODE);
+      mode->RequiredBandwidth = (UINT64)(it->width * it->height * it->refresh * 32);
+
+      FillSignalInfo(mode->TargetVideoSignalInfo.targetVideoSignalInfo, it->width, it->height, it->refresh, true);
+    }
+
+    NTSTATUS status = IddCxMonitorUpdateModes(m_monitor, &um);
+    if (!NT_SUCCESS(status))
+      DEBUG_ERROR("IddCxMonitorUpdateModes Failed (0x%08x)", status);
+
+    _freea(modes);
+  }
+#endif
+}
+
+bool CIndirectDeviceContext::SetupLGMP(size_t alignSize)
+{
+  // this may get called multiple times as we need to delay calling it until
+  // we can determine the required alignment from the GPU in use
+  if (m_lgmp)
+    return true;
+
+  m_alignSize = alignSize;
+  
   std::stringstream ss;
   {
     KVMFR kvmfr = {};
     memcpy_s(kvmfr.magic, sizeof(kvmfr.magic), KVMFR_MAGIC, sizeof(KVMFR_MAGIC) - 1);
     kvmfr.version  = KVMFR_VERSION;
-    kvmfr.features = KVMFR_FEATURE_SETCURSORPOS;
-    strncpy_s(kvmfr.hostver, "FIXME-IDD", sizeof(kvmfr.hostver) - 1);
+    kvmfr.features =
+      KVMFR_FEATURE_SETCURSORPOS |
+      KVMFR_FEATURE_WINDOWSIZE;
+    strncpy_s(kvmfr.hostver, LG_VERSION_STR, sizeof(kvmfr.hostver) - 1);
     ss.write(reinterpret_cast<const char *>(&kvmfr), sizeof(kvmfr));
   }
 
@@ -214,7 +446,7 @@ bool CIndirectDeviceContext::SetupLGMP()
     KVMFRRecord_VMInfo * vmInfo = static_cast<KVMFRRecord_VMInfo *>(calloc(1, sizeof(*vmInfo)));
     if (!vmInfo)
     {
-      DBGPRINT("Failed to allocate KVMFRRecord_VMInfo");
+      DEBUG_ERROR("Failed to allocate KVMFRRecord_VMInfo");
       return false;
     }
     vmInfo->cpus    = static_cast<uint8_t>(CPlatformInfo::GetProcCount  ());
@@ -223,12 +455,12 @@ bool CIndirectDeviceContext::SetupLGMP()
 
     const uint8_t * uuid = CPlatformInfo::GetUUID();
     memcpy_s (vmInfo->uuid, sizeof(vmInfo->uuid), uuid, 16);
-    strncpy_s(vmInfo->capture, "Idd Driver", sizeof(vmInfo->capture));
+    strncpy_s(vmInfo->capture, "Looking Glass IDD Driver", sizeof(vmInfo->capture));
 
     KVMFRRecord * record = static_cast<KVMFRRecord *>(calloc(1, sizeof(*record)));
     if (!record)
     {
-      DBGPRINT("Failed to allocate KVMFRRecord");
+      DEBUG_ERROR("Failed to allocate KVMFRRecord");
       return false;
     }
 
@@ -244,7 +476,7 @@ bool CIndirectDeviceContext::SetupLGMP()
     KVMFRRecord_OSInfo * osInfo = static_cast<KVMFRRecord_OSInfo *>(calloc(1, sizeof(*osInfo)));
     if (!osInfo)
     {
-      DBGPRINT("Failed to allocate KVMFRRecord_OSInfo");
+      DEBUG_ERROR("Failed to allocate KVMFRRecord_OSInfo");
       return false;
     }
 
@@ -255,7 +487,7 @@ bool CIndirectDeviceContext::SetupLGMP()
     KVMFRRecord* record = static_cast<KVMFRRecord*>(calloc(1, sizeof(*record)));
     if (!record)
     {
-      DBGPRINT("Failed to allocate KVMFRRecord");
+      DEBUG_ERROR("Failed to allocate KVMFRRecord");
       return false;
     }
 
@@ -273,19 +505,19 @@ bool CIndirectDeviceContext::SetupLGMP()
   if ((status = lgmpHostInit(m_ivshmem.GetMem(), (uint32_t)m_ivshmem.GetSize(),
     &m_lgmp, (uint32_t)udata.size(), (uint8_t*)&udata[0])) != LGMP_OK)
   {
-    DBGPRINT("lgmpHostInit Failed: %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostInit Failed: %s", lgmpStatusString(status));
     return false;
   }
 
   if ((status = lgmpHostQueueNew(m_lgmp, FRAME_QUEUE_CONFIG, &m_frameQueue)) != LGMP_OK)
   {
-    DBGPRINT("lgmpHostQueueCreate Failed (Frame): %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostQueueCreate Failed (Frame): %s", lgmpStatusString(status));
     return false;
   }
 
   if ((status = lgmpHostQueueNew(m_lgmp, POINTER_QUEUE_CONFIG, &m_pointerQueue)) != LGMP_OK)
   {
-    DBGPRINT("lgmpHostQueueCreate Failed (Pointer): %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostQueueCreate Failed (Pointer): %s", lgmpStatusString(status));
     return false;
   }
 
@@ -293,7 +525,7 @@ bool CIndirectDeviceContext::SetupLGMP()
   {
     if ((status = lgmpHostMemAlloc(m_lgmp, MAX_POINTER_SIZE, &m_pointerMemory[i])) != LGMP_OK)
     {
-      DBGPRINT("lgmpHostMemAlloc Failed (Pointer): %s", lgmpStatusString(status));
+      DEBUG_ERROR("lgmpHostMemAlloc Failed (Pointer): %s", lgmpStatusString(status));
       return false;
     }
     memset(lgmpHostMemPtr(m_pointerMemory[i]), 0, MAX_POINTER_SIZE);
@@ -303,24 +535,35 @@ bool CIndirectDeviceContext::SetupLGMP()
   {
     if ((status = lgmpHostMemAlloc(m_lgmp, MAX_POINTER_SIZE, &m_pointerShapeMemory[i])) != LGMP_OK)
     {
-      DBGPRINT("lgmpHostMemAlloc Failed (Pointer Shapes): %s", lgmpStatusString(status));
+      DEBUG_ERROR("lgmpHostMemAlloc Failed (Pointer Shapes): %s", lgmpStatusString(status));
       return false;
     }
     memset(lgmpHostMemPtr(m_pointerShapeMemory[i]), 0, MAX_POINTER_SIZE);
   }
 
   m_maxFrameSize = lgmpHostMemAvail(m_lgmp);
-  m_maxFrameSize = (m_maxFrameSize -(CPlatformInfo::GetPageSize() - 1)) & ~(CPlatformInfo::GetPageSize() - 1);
+  m_maxFrameSize = (m_maxFrameSize -(m_alignSize - 1)) & ~(m_alignSize - 1);
   m_maxFrameSize /= LGMP_Q_FRAME_LEN;
-  DBGPRINT("Max Frame Size: %u MiB\n", (unsigned int)(m_maxFrameSize / 1048576LL));
+  DEBUG_INFO("Max Frame Size: %u MiB", (unsigned int)(m_maxFrameSize / 1048576LL));
 
   for (int i = 0; i < LGMP_Q_FRAME_LEN; ++i)
+  {
     if ((status = lgmpHostMemAllocAligned(m_lgmp, (uint32_t)m_maxFrameSize,
-        (uint32_t)CPlatformInfo::GetPageSize(), &m_frameMemory[i])) != LGMP_OK)
+        (uint32_t)m_alignSize, &m_frameMemory[i])) != LGMP_OK)
     {
-      DBGPRINT("lgmpHostMemAllocAligned Failed (Frame): %s", lgmpStatusString(status));
+      DEBUG_ERROR("lgmpHostMemAllocAligned Failed (Frame): %s", lgmpStatusString(status));
       return false;
     }
+
+    m_frame[i] = (KVMFRFrame *)lgmpHostMemPtr(m_frameMemory[i]);
+
+    /**
+     * put the framebuffer on the border of the next page, this is to allow for
+     * aligned DMA tranfers by the reciever */
+    const size_t alignOffset = alignSize - sizeof(FrameBuffer);
+    m_frame[i]->offset = (uint32_t)alignOffset;
+    m_frameBuffer[i] = (FrameBuffer*)(((uint8_t*)m_frame[i]) + alignOffset);
+  }
 
   WDF_TIMER_CONFIG config;
   WDF_TIMER_CONFIG_INIT_PERIODIC(&config,
@@ -345,12 +588,34 @@ bool CIndirectDeviceContext::SetupLGMP()
   NTSTATUS s = WdfTimerCreate(&config, &attribs, &m_lgmpTimer);
   if (!NT_SUCCESS(s))
   {
-    DBGPRINT("Timer creation failed: 0x%08x", s);
+    DEBUG_ERROR_HR(s, "Timer creation failed");
     return false;
   }
   WdfTimerStart(m_lgmpTimer, WDF_REL_TIMEOUT_IN_MS(10));
 
   return true;
+}
+
+void CIndirectDeviceContext::DeInitLGMP()
+{
+  m_hasFrame = false;
+
+  if (m_lgmp == nullptr)
+    return;
+
+  if (m_lgmpTimer)
+  {
+    WdfTimerStop(m_lgmpTimer, TRUE);
+    m_lgmpTimer = nullptr;
+  }
+
+  for (int i = 0; i < LGMP_Q_FRAME_LEN; ++i)
+    lgmpHostMemFree(&m_frameMemory[i]);
+  for (int i = 0; i < LGMP_Q_POINTER_LEN; ++i)
+    lgmpHostMemFree(&m_pointerMemory[i]);
+  for (int i = 0; i < POINTER_SHAPE_BUFFERS; ++i)
+    lgmpHostMemFree(&m_pointerShapeMemory[i]);
+  lgmpHostFree(&m_lgmp);
 }
 
 void CIndirectDeviceContext::LGMPTimer()
@@ -360,12 +625,12 @@ void CIndirectDeviceContext::LGMPTimer()
   {
     if (status == LGMP_ERR_CORRUPTED)
     {
-      DBGPRINT("LGMP reported the shared memory has been corrupted, attempting to recover\n");
+      DEBUG_WARN("LGMP reported the shared memory has been corrupted, attempting to recover\n");
       //TODO: fixme - reinit
       return;
     }
 
-    DBGPRINT("lgmpHostProcess Failed: %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostProcess Failed: %s", lgmpStatusString(status));
     //TODO: fixme - shutdown
     return;
   }
@@ -379,9 +644,15 @@ void CIndirectDeviceContext::LGMPTimer()
     {
       case KVMFR_MESSAGE_SETCURSORPOS:
       {
-        KVMFRSetCursorPos *sp = (KVMFRSetCursorPos *)msg;
-        SetCursorPos(sp->x, sp->y);
+        KVMFRSetCursorPos* sp = (KVMFRSetCursorPos*)msg;
+        g_pipe.SetCursorPos(sp->x, sp->y);
         break;
+      }
+
+      case KVMFR_MESSAGE_WINDOWSIZE:
+      {
+        KVMFRWindowSize* ws = (KVMFRWindowSize*)msg;
+        SetResolution(ws->w, ws->h);
       }
     }
 
@@ -390,19 +661,20 @@ void CIndirectDeviceContext::LGMPTimer()
 
   if (lgmpHostQueueNewSubs(m_frameQueue) && m_monitor)
   {
-    auto* wrapper = WdfObjectGet_CIndirectMonitorContextWrapper(m_monitor);
-    if (wrapper)
-      wrapper->context->ResendLastFrame();
+    if (m_hasFrame)
+      lgmpHostQueuePost(m_frameQueue, 0, m_frameMemory[m_frameIndex]);
   }
 
   if (lgmpHostQueueNewSubs(m_pointerQueue))
     ResendCursor();
 }
 
-void CIndirectDeviceContext::SendFrame(int width, int height, int pitch, DXGI_FORMAT format, void* data)
+CIndirectDeviceContext::PreparedFrameBuffer CIndirectDeviceContext::PrepareFrameBuffer(int width, int height, int pitch, DXGI_FORMAT format)
 {
+  PreparedFrameBuffer result = {};
+
   if (!m_lgmp || !m_frameQueue)
-    return;
+    return result;
 
   if (m_width != width || m_height != height || m_pitch != pitch || m_format != format)
   {
@@ -413,13 +685,15 @@ void CIndirectDeviceContext::SendFrame(int width, int height, int pitch, DXGI_FO
     ++m_formatVer;
   }
 
-  while (lgmpHostQueuePending(m_frameQueue) == LGMP_Q_FRAME_LEN)
-    Sleep(0);
-
   if (++m_frameIndex == LGMP_Q_FRAME_LEN)
     m_frameIndex = 0;
 
-  KVMFRFrame * fi = (KVMFRFrame *)lgmpHostMemPtr(m_frameMemory[m_frameIndex]);
+  KVMFRFrame * fi = m_frame[m_frameIndex];
+
+  // wait until there is room in the queue
+  while (lgmpHostQueuePending(m_frameQueue) == LGMP_Q_FRAME_LEN)
+    Sleep(0);
+
   int bpp = 4;
   switch (format)
   {
@@ -433,40 +707,54 @@ void CIndirectDeviceContext::SendFrame(int width, int height, int pitch, DXGI_FO
       break;
 
     default:
-      DBGPRINT("Unsuppoted DXGI format");
-      return;
+      DEBUG_ERROR("Unsuppoted DXGI format 0x%08x", format);
+      return result;
   }
 
-  //FIXME: this should not really be done here, this is a hack
-  #pragma warning(push)
-  #pragma warning(disable: 4200)
-  struct FrameBuffer
-  {
-    volatile uint32_t wp;
-    uint8_t data[0];
-  };
-  #pragma warning(pop)
-
-  fi->formatVer    = m_formatVer;
-  fi->frameSerial  = m_frameSerial++;
-  fi->screenWidth  = width;
-  fi->screenHeight = height;
-  fi->frameWidth   = width;
-  fi->frameHeight  = height;
-  fi->stride       = width * bpp;
-  fi->pitch        = pitch;
-  fi->offset       = (uint32_t)(CPlatformInfo::GetPageSize() - sizeof(FrameBuffer));
-  fi->flags        = 0;
-  fi->rotation     = FRAME_ROT_0;
-
+  fi->formatVer        = m_formatVer;
+  fi->frameSerial      = m_frameSerial++;
+  fi->screenWidth      = width;
+  fi->screenHeight     = height;
+  fi->dataWidth        = width;
+  fi->dataHeight       = height;
+  fi->frameWidth       = width;
+  fi->frameHeight      = height;
+  fi->stride           = width * bpp;
+  fi->pitch            = pitch;
+  // fi->offset is initialized at startup
+  fi->flags            = 0;
+  fi->rotation         = FRAME_ROT_0;
   fi->damageRectsCount = 0;
 
-  FrameBuffer * fb = (FrameBuffer *)(((uint8_t*)fi) + fi->offset);
+  FrameBuffer* fb = m_frameBuffer[m_frameIndex];  
   fb->wp = 0;
 
   lgmpHostQueuePost(m_frameQueue, 0, m_frameMemory[m_frameIndex]);
-  memcpy(fb->data, data, (size_t)height * (size_t)pitch);
-  fb->wp = height * pitch;
+
+  result.frameIndex = m_frameIndex;
+  result.mem        = fb->data;
+
+  m_hasFrame = true;
+  return result;
+}
+
+void CIndirectDeviceContext::WriteFrameBuffer(unsigned frameIndex, void* src, size_t offset, size_t len, bool setWritePos)
+{
+  FrameBuffer * fb = m_frameBuffer[frameIndex];
+
+  memcpy(
+    (void *)((uintptr_t)fb->data + offset),
+    (void *)((uintptr_t)src + offset),
+    len);
+
+  if (setWritePos)
+    fb->wp = (uint32_t)(offset + len);
+}
+
+void CIndirectDeviceContext::FinalizeFrameBuffer(unsigned frameIndex)
+{
+  FrameBuffer * fb = m_frameBuffer[frameIndex];
+  fb->wp = m_height * m_pitch;
 }
 
 void CIndirectDeviceContext::SendCursor(const IDARG_OUT_QUERY_HWCURSOR& info, const BYTE * data)
@@ -502,7 +790,7 @@ void CIndirectDeviceContext::SendCursor(const IDARG_OUT_QUERY_HWCURSOR& info, co
   if (info.CursorShapeInfo.CursorType != IDDCX_CURSOR_SHAPE_TYPE_UNINITIALIZED)
   {
     memcpy(cursor + 1, data,
-      (size_t)(info.CursorShapeInfo.Height * info.CursorShapeInfo.Pitch));
+      (size_t)info.CursorShapeInfo.Height * info.CursorShapeInfo.Pitch);
 
     cursor->hx     = (int8_t  )info.CursorShapeInfo.XHot;
     cursor->hy     = (int8_t  )info.CursorShapeInfo.YHot;
@@ -534,7 +822,7 @@ void CIndirectDeviceContext::SendCursor(const IDARG_OUT_QUERY_HWCURSOR& info, co
       continue;
     }
 
-    DBGPRINT("lgmpHostQueuePost Failed (Pointer): %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostQueuePost Failed (Pointer): %s", lgmpStatusString(status));
     break;
   }
 }
@@ -562,7 +850,7 @@ void CIndirectDeviceContext::ResendCursor()
       continue;
     }
 
-    DBGPRINT("lgmpHostQueuePost Failed (Pointer): %s", lgmpStatusString(status));
+    DEBUG_ERROR("lgmpHostQueuePost Failed (Pointer): %s", lgmpStatusString(status));
     break;
   }
 }

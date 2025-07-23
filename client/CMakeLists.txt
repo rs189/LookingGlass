@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(looking-glass-client C CXX)
 
 get_filename_component(PROJECT_TOP "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
@@ -113,6 +113,7 @@ set(SOURCES
   src/main.c
   src/core.c
   src/app.c
+  src/message.c
   src/audio.c
   src/config.c
   src/keybind.c
@@ -124,6 +125,7 @@ set(SOURCES
   src/eglutil.c
   src/overlay_utils.c
   src/render_queue.c
+  src/evdev.c
 
   src/overlay/splash.c
   src/overlay/alert.c
@@ -137,6 +139,8 @@ set(SOURCES
 
 # Force cimgui to build as a static library.
 set(IMGUI_STATIC "yes" CACHE STRING "Build as a static library")
+add_definitions("-DCIMGUI_USE_OPENGL2=1")
+add_definitions("-DCIMGUI_USE_OPENGL3=1")
 
 add_subdirectory("${PROJECT_TOP}/resources"       "${CMAKE_BINARY_DIR}/resources")
 add_subdirectory("${PROJECT_TOP}/common"          "${CMAKE_BINARY_DIR}/common"   )
@@ -147,6 +151,7 @@ add_subdirectory("${PROJECT_TOP}/repos/cimgui"    "${CMAKE_BINARY_DIR}/cimgui" E
 add_subdirectory(displayservers)
 add_subdirectory(renderers)
 
+configure_file("${PROJECT_TOP}/resources/looking-glass-client.desktop.in" "${CMAKE_BINARY_DIR}/resources/looking-glass-client.desktop" @ONLY)
 add_executable(looking-glass-client ${SOURCES})
 
 target_compile_definitions(looking-glass-client PRIVATE CIMGUI_DEFINE_ENUMS_AND_STRUCTS=1)
@@ -176,5 +181,11 @@ endif()
 install(TARGETS looking-glass-client
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT binary)
+
+install(FILES "${CMAKE_BINARY_DIR}/resources/looking-glass-client.desktop"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/applications")
+install(FILES "${PROJECT_TOP}/resources/lg-logo.svg"
+        DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps"
+        RENAME "looking-glass.svg")
 
 feature_summary(WHAT ENABLED_FEATURES DISABLED_FEATURES)

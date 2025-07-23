@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -195,7 +195,7 @@ static int splash_render(void * udata, bool interactive, struct Rect * windowRec
 
   ImDrawList_AddImage(
     list,
-    l_logo.tex,
+    (ImTextureID)l_logo.tex,
     (ImVec2){
       logoRect.x,
       logoRect.y

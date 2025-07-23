@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -48,13 +48,13 @@ void ll_free(struct ll * list)
   free(list);
 }
 
-void ll_push(struct ll * list, void * data)
+bool ll_push(struct ll * list, void * data)
 {
   struct ll_item * item = malloc(sizeof(*item));
   if (!item)
   {
     DEBUG_ERROR("out of memory");
-    return;
+    return false;
   }
 
   item->data = data;
@@ -69,7 +69,7 @@ void ll_push(struct ll * list, void * data)
     list->head = item;
     list->tail = item;
     LG_UNLOCK(list->lock);
-    return;
+    return true;
   }
 
   item->prev = list->tail;
@@ -78,20 +78,24 @@ void ll_push(struct ll * list, void * data)
   list->tail       = item;
 
   LG_UNLOCK(list->lock);
+  return true;
 }
 
 bool ll_shift(struct ll * list, void ** data)
 {
   LG_LOCK(list->lock);
+  bool result = ll_shift_nl(list, data);
+  LG_UNLOCK(list->lock);
+  return result;
+}
+
+bool ll_shift_nl(struct ll * list, void ** data)
+{
   if (!list->head)
-  {
-    LG_UNLOCK(list->lock);
     return false;
-  }
 
   struct ll_item * item = list->head;
   ll_removeNL(list, item);
-  LG_UNLOCK(list->lock);
 
   if (data)
     *data = item->data;
@@ -103,29 +107,31 @@ bool ll_shift(struct ll * list, void ** data)
 bool ll_peek_head(struct ll * list, void ** data)
 {
   LG_LOCK(list->lock);
-  if (!list->head)
-  {
-    LG_UNLOCK(list->lock);
-    return false;
-  }
-
-  *data = list->head->data;
+  bool result = ll_peek_head_nl(list, data);
   LG_UNLOCK(list->lock);
+  return result;
+}
 
+bool ll_peek_head_nl(struct ll * list, void ** data)
+{
+  if (!list->head)
+    return false;
+  *data = list->head->data;
   return true;
 }
 
 bool ll_peek_tail(struct ll * list, void ** data)
 {
   LG_LOCK(list->lock);
-  if (!list->tail)
-  {
-    LG_UNLOCK(list->lock);
-    return false;
-  }
-
-  *data = list->tail->data;
+  bool result = ll_peek_tail_nl(list, data);
   LG_UNLOCK(list->lock);
+  return result;
+}
 
+bool ll_peek_tail_nl(struct ll * list, void ** data)
+{
+  if (!list->tail)
+    return false;
+  *data = list->tail->data;
   return true;
 }

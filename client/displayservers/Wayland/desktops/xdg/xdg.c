@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -147,7 +147,7 @@ bool xdg_shellInit(struct wl_display * display, struct wl_surface * surface,
   state.toplevel = xdg_surface_get_toplevel(state.surface);
   xdg_toplevel_add_listener(state.toplevel, &xdgToplevelListener, NULL);
   xdg_toplevel_set_title(state.toplevel, title);
-  xdg_toplevel_set_app_id(state.toplevel, appId/*"looking-glass-client"*/);
+  xdg_toplevel_set_app_id(state.toplevel, appId);
 
   if (fullscreen)
     xdg_toplevel_set_fullscreen(state.toplevel, NULL);

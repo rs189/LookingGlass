@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -137,7 +137,7 @@ static bool libdecor_shellInit(
   state.libdecorFrame = libdecor_decorate(state.libdecor, surface,
       &libdecorFrameListener, NULL);
 
-  libdecor_frame_set_app_id(state.libdecorFrame, appId/*"looking-glass-client"*/);
+  libdecor_frame_set_app_id(state.libdecorFrame, appId);
   libdecor_frame_set_title(state.libdecorFrame, title);
   libdecor_frame_map(state.libdecorFrame);
 

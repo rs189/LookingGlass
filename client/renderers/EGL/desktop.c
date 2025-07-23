@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -454,7 +454,7 @@ bool egl_desktopRender(EGL_Desktop * desktop, unsigned int outputWidth,
     dma    = desktop->useDMA;
   }
 
-  if (unlikely(outputWidth == 0 && outputHeight == 0))
+  if (unlikely(outputWidth == 0 || outputHeight == 0))
     DEBUG_FATAL("outputWidth || outputHeight == 0");
 
   enum EGL_TexStatus status;

@@ -1,6 +1,6 @@
 /**
  * Looking Glass
- * Copyright © 2017-2024 The Looking Glass Authors
+ * Copyright © 2017-2025 The Looking Glass Authors
  * https://looking-glass.io
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -263,6 +263,7 @@ struct LG_DisplayServerOps LGDS_Wayland =
   .uncapturePointer    = waylandUncapturePointer,
   .grabKeyboard        = waylandGrabKeyboard,
   .ungrabKeyboard      = waylandUngrabKeyboard,
+  .getCharCode         = waylandGetCharCode,
   .warpPointer         = waylandWarpPointer,
   .realignPointer      = waylandRealignPointer,
   .isValidPointerPos   = waylandIsValidPointerPos,
